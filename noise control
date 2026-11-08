@@ -1,0 +1,86 @@
+# 基于Kwe algebraSolutionsv2.ipynb 的 BG 目标函数和归一化约束。
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sympy import symbols, integrate, diff, expand, solve, lambdify
+
+# 补齐kwe前面求原 BG 权重的部分。
+c1, c2, lam, r, s = symbols('c1 c2 lambda r s', real=True)
+phi = c1*r + c2*r**3
+f = integrate(phi**2 * (r-s)**2, (r, 0, 1))
+g = c1/2 + c2/4 - 1
+df1 = expand(diff(f, c1))
+df2 = expand(diff(f, c2))
+a1, a2 = df1.coeff(c1), df1.coeff(c2)
+a3, a4 = df2.coeff(c1), df2.coeff(c2)
+solution = solve([df1-lam/2, df2-lam/4, g], (c1, c2, lam), dict=True)[0]
+
+
+
+s_vals = np.linspace(0, 1, 1001)
+c1_vals = lambdify(s, solution[c1], 'numpy')(s_vals)
+c2_vals = lambdify(s, solution[c2], 'numpy')(s_vals)
+
+
+
+
+# 用报告 Table 1 的线性密度 rho = 1 + 0.2r。
+nc_true = 1 + 0.2 * s_vals
+nc_mu = np.array([
+    float(integrate((1 + r/5) * r, (r, 0, 1))),
+    float(integrate((1 + r/5) * r**3, (r, 0, 1)))
+])
+nc_alpha = 10
+# Table 3 已有的噪声：质量 0.01%，转动惯量 4.5%。
+# 这是单独的较高噪声，测试过不同值之后，这个最明显
+nc_sigma = np.abs(nc_mu) * np.array([0.0001, 0.045])
+
+# 保留kwe的矩阵，只在两个对角项加上噪声惩罚的导数,方差更好算，而且标准差不能乘以负数
+nc_coeffs = lambdify(s, [a1, a2, a3, a4], 'numpy')
+nc_original = np.column_stack([c1_vals, c2_vals])
+nc_damped = []
+for position in s_vals:
+    h11, h12, h21, h22 = nc_coeffs(position)
+    matrix = np.array([
+        [h11 + 2*nc_alpha*nc_sigma[0]**2, h12, -0.5],
+        [h21, h22 + 2*nc_alpha*nc_sigma[1]**2, -0.25],
+        [0.5, 0.25, 0]
+    ])
+    answer = np.linalg.solve(matrix, [0, 0, 1])
+    nc_damped.append(answer[:2])
+nc_damped = np.array(nc_damped)
+
+#测1000个，同样的误差值，就能直观对比出两种方法的稳定性。因为每个观测值都是独立的，所以噪声是正态分布的。
+nc_rng = np.random.default_rng(42)
+nc_data = nc_mu + nc_rng.normal(size=(1000, 2)) * nc_sigma
+nc_bg = nc_data @ nc_original.T
+nc_db = nc_data @ nc_damped.T
+# 每行是一条估计曲线；同一对观测值用于所有半径。
+
+# 平均曲线和正负一个标准差，阴影越窄表示波动越小。更直观了
+fig, ax = plt.subplots(figsize=(6.5, 3.8))
+ax.plot(s_vals, nc_true, 'k--', label='True density')
+nc_rows = []
+for name, values, colour in [
+    ('Original BG', nc_bg, "#1384e0"),
+    ('Damped BG', nc_db, "#d77016")
+]:
+    mean = values.mean(axis=0)
+    sd = values.std(axis=0, ddof=1)
+    ax.plot(s_vals, mean, color=colour, label=name)
+    ax.fill_between(s_vals, mean-sd, mean+sd, color=colour, alpha=0.18)
+    # Noise RMS：各半径的方差取平均，再开平方。
+    # RMSE：所有试验和半径上的误差平方取平均，再开平方。
+    nc_rows.append([name, np.sqrt(np.mean(sd**2)),
+                    np.sqrt(np.mean((values-nc_true)**2))])
+
+ax.set(xlabel='Normalised radius, s', ylabel='Relative density', xlim=(0, 1))
+ax.legend()
+ax.grid(alpha=0.2)
+fig.tight_layout()
+fig.savefig('damped_example.png', dpi=300)
+plt.show()
+
+nc_table = pd.DataFrame(nc_rows, columns=['Method', 'Noise RMS', 'RMSE'])
+print(nc_table.to_string(index=False, float_format=lambda x: f'{x:.5f}'))
+nc_table.to_csv('damped_example_results.csv', index=False)
