@@ -31,9 +31,9 @@ nc_mu = np.array([
     float(integrate((1 + r/5) * r**3, (r, 0, 1)))
 ])
 nc_alpha = 10
-# Table 3 已有的噪声：质量 0.01%，转动惯量 4.5%。
+# Table 3 已有的噪声：质量 0.01%，转动惯量 1%。（已修改成1%，和前后一致）
 # 这是单独的较高噪声，测试过不同值之后，这个最明显
-nc_sigma = np.abs(nc_mu) * np.array([0.0001, 0.045])
+nc_sigma = np.abs(nc_mu) * np.array([0.0001, 0.01])
 
 # 保留kwe的矩阵，只在两个对角项加上噪声惩罚的导数,方差更好算，而且标准差不能乘以负数
 nc_coeffs = lambdify(s, [a1, a2, a3, a4], 'numpy')
